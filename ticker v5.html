@@ -1,0 +1,1483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TICKER — P2P Market Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function(){
+    var el = document.getElementById('landing-err');
+    if(typeof Peer === 'undefined'){
+      if(el) el.textContent = 'Could not load the networking library (unpkg.com). Check your internet connection and reload the page.';
+      console.error('[TICKER] PeerJS failed to load from unpkg.com — check network/adblock, or try reloading.');
+      return;
+    }
+    if(typeof RTCPeerConnection === 'undefined'){
+      if(el) el.textContent = 'This browser or frame does not support WebRTC, which peer-to-peer play requires. If you are viewing this inside a chat preview, download the file and open it directly in a browser tab instead.';
+      console.error('[TICKER] RTCPeerConnection is unavailable in this context. If running inside an iframe/preview, open the file directly in a full browser tab.');
+      return;
+    }
+    console.log('[TICKER] PeerJS ' + (Peer.version || '') + ' loaded, WebRTC available. Ready to host or join.');
+  });
+</script>
+<style>
+  :root{
+    --bg:#0a0d12;
+    --bg-panel:#12161d;
+    --bg-panel-alt:#171c25;
+    --bg-raised:#1c222c;
+    --border:#252c38;
+    --border-soft:#1b212b;
+    --text:#dbe1e9;
+    --text-dim:#7d8896;
+    --text-faint:#4c5563;
+    --amber:#ffb454;
+    --amber-dim:#8a6a3a;
+    --cyan:#4fd1c5;
+    --up:#3ddc84;
+    --down:#ff5c5c;
+    --purple:#a78bfa;
+    --mono:'IBM Plex Mono', monospace;
+    --sans:'Inter', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);height:100%;}
+  body{min-height:100vh;display:flex;flex-direction:column;}
+  ::selection{background:var(--amber);color:#111;}
+  button{font-family:var(--sans);cursor:pointer;}
+  input{font-family:var(--mono);}
+  .hidden{display:none !important;}
+  .mono{font-family:var(--mono);}
+  a{color:var(--cyan);}
+
+  /* ---------- Ticker tape ---------- */
+  #tape-wrap{
+    width:100%;overflow:hidden;background:#000;border-bottom:1px solid var(--border);
+    white-space:nowrap;position:relative;height:34px;flex-shrink:0;
+  }
+  #tape-wrap::before, #tape-wrap::after{
+    content:"";position:absolute;top:0;bottom:0;width:40px;z-index:2;pointer-events:none;
+  }
+  #tape-wrap::before{left:0;background:linear-gradient(90deg,#000,transparent);}
+  #tape-wrap::after{right:0;background:linear-gradient(270deg,#000,transparent);}
+  #tape-track{
+    display:inline-flex;align-items:center;height:34px;
+    animation:scrollTape 30s linear infinite;
+    will-change:transform;
+  }
+  #tape-track .tape-item{
+    font-family:var(--mono);font-size:12.5px;padding:0 22px;display:inline-flex;align-items:center;gap:8px;
+    color:var(--text-dim);border-right:1px solid #1a1a1a;
+  }
+  #tape-track .tape-item .sym{color:var(--text);font-weight:600;}
+  #tape-track .tape-item .chg.up{color:var(--up);}
+  #tape-track .tape-item .chg.down{color:var(--down);}
+  @keyframes scrollTape{
+    from{transform:translateX(0);}
+    to{transform:translateX(-50%);}
+  }
+
+  /* ---------- Layout shells ---------- */
+  .screen{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;}
+  .app-main{flex:1;display:flex;flex-direction:column;min-height:0;}
+
+  /* ---------- Landing ---------- */
+  #screen-landing .landing-inner{max-width:480px;width:100%;text-align:center;}
+  .brand{
+    font-family:var(--mono);font-weight:700;font-size:52px;letter-spacing:2px;color:var(--text);
+    display:flex;align-items:baseline;justify-content:center;gap:2px;margin-bottom:6px;
+  }
+  .brand .cursor{
+    display:inline-block;width:10px;height:38px;background:var(--amber);margin-left:6px;
+    animation:blink 1s step-end infinite;
+  }
+  @keyframes blink{50%{opacity:0;}}
+  .tagline{color:var(--text-dim);font-size:14px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:44px;}
+  .landing-actions{display:flex;flex-direction:column;gap:14px;}
+  .btn{
+    border-radius:3px;border:1px solid var(--border);background:var(--bg-panel);color:var(--text);
+    padding:14px 20px;font-size:14px;font-weight:600;letter-spacing:.5px;transition:.15s border-color,.15s background;
+  }
+  .btn:hover{border-color:var(--text-dim);}
+  .btn-primary{background:var(--amber);color:#1a1206;border-color:var(--amber);}
+  .btn-primary:hover{background:#ffc370;}
+  .btn-ghost{background:transparent;}
+  .btn-small{padding:8px 14px;font-size:12.5px;}
+  .btn:disabled{opacity:.4;cursor:not-allowed;}
+  .btn-buy{background:rgba(61,220,132,.12);border-color:rgba(61,220,132,.35);color:var(--up);}
+  .btn-buy:hover{background:rgba(61,220,132,.22);}
+  .btn-sell{background:rgba(255,92,92,.1);border-color:rgba(255,92,92,.32);color:var(--down);}
+  .btn-sell:hover{background:rgba(255,92,92,.2);}
+
+  .field-label{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-faint);margin-bottom:6px;text-align:left;}
+  .text-input{
+    width:100%;background:var(--bg-panel-alt);border:1px solid var(--border);color:var(--text);
+    padding:12px 14px;border-radius:3px;font-size:15px;letter-spacing:2px;text-transform:uppercase;
+  }
+  .text-input:focus{outline:none;border-color:var(--amber);}
+  .join-row{display:flex;gap:8px;margin-top:14px;}
+  .join-row .text-input{letter-spacing:2px;}
+  .err-msg{color:var(--down);font-size:12.5px;margin-top:10px;min-height:16px;}
+  .divider-or{color:var(--text-faint);font-size:11px;letter-spacing:2px;margin:6px 0;text-transform:uppercase;}
+
+  /* ---------- Lobby ---------- */
+  .panel{background:var(--bg-panel);border:1px solid var(--border);border-radius:4px;}
+  #screen-lobby .lobby-card{max-width:480px;width:100%;padding:30px;}
+  .room-code-display{
+    font-family:var(--mono);font-size:38px;font-weight:700;letter-spacing:8px;color:var(--amber);
+    text-align:center;padding:18px 0;background:var(--bg-panel-alt);border:1px dashed var(--amber-dim);border-radius:4px;margin:14px 0 6px;
+  }
+  .room-code-hint{text-align:center;color:var(--text-dim);font-size:12px;margin-bottom:22px;}
+  .lobby-players{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;margin-bottom:22px;}
+  .lobby-players li{
+    display:flex;align-items:center;gap:10px;background:var(--bg-panel-alt);border:1px solid var(--border-soft);
+    padding:10px 12px;border-radius:3px;font-size:13.5px;
+  }
+  .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+  .lobby-players li .you-tag{margin-left:auto;color:var(--text-faint);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;}
+  .lobby-status{text-align:center;color:var(--text-dim);font-size:13px;margin-top:8px;}
+  .section-title{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-faint);margin-bottom:10px;}
+
+  .settings-block{margin-bottom:20px;}
+  .settings-row{margin-bottom:14px;}
+  .settings-row:last-child{margin-bottom:0;}
+  .settings-row .field-label{display:flex;justify-content:space-between;margin-bottom:8px;}
+  .settings-row .field-label span.val{color:var(--amber);font-family:var(--mono);}
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;
+    background:var(--border);accent-color:var(--amber);outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:15px;height:15px;border-radius:50%;
+    background:var(--amber);cursor:pointer;border:2px solid #1a1206;
+  }
+  input[type=range]::-moz-range-thumb{
+    width:15px;height:15px;border-radius:50%;background:var(--amber);cursor:pointer;border:2px solid #1a1206;
+  }
+  .chip-preview{color:var(--text-faint);font-size:11.5px;font-family:var(--mono);text-align:left;line-height:1.6;margin-top:2px;}
+  .settings-readonly-text{text-align:left;color:var(--text-dim);font-size:12.5px;margin-bottom:2px;}
+
+  .mode-toggle{display:flex;gap:8px;}
+  .mode-btn{
+    flex:1;text-align:left;padding:10px 12px;border-radius:3px;border:1px solid var(--border);
+    background:var(--bg-panel-alt);display:flex;flex-direction:column;gap:3px;color:var(--text);
+  }
+  .mode-btn .mode-btn-title{font-size:12.5px;font-weight:600;}
+  .mode-btn .mode-btn-desc{font-size:10.5px;color:var(--text-faint);line-height:1.4;}
+  .mode-btn.active{border-color:var(--amber);background:rgba(255,180,84,.08);}
+  .mode-btn.active .mode-btn-title{color:var(--amber);}
+  .mode-readonly-badge{
+    display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--amber);
+    border:1px solid var(--amber-dim);background:rgba(255,180,84,.08);border-radius:3px;padding:6px 10px;margin-bottom:8px;
+  }
+
+  /* ---------- Results screen ---------- */
+  #screen-results .lobby-card{max-width:560px;width:100%;padding:30px;}
+  .results-list{list-style:none;margin:14px 0 22px;padding:0;display:flex;flex-direction:column;gap:8px;}
+  .results-row{
+    display:flex;align-items:center;gap:10px;background:var(--bg-panel-alt);border:1px solid var(--border-soft);
+    border-radius:3px;padding:11px 14px;font-size:13px;
+  }
+  .results-row.first{border-color:var(--amber-dim);background:rgba(255,180,84,.07);}
+  .results-rank{width:24px;font-family:var(--mono);color:var(--text-faint);text-align:center;font-size:14px;}
+  .results-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .results-networth{font-family:var(--mono);font-weight:600;}
+  .results-pnl{font-family:var(--mono);font-size:11.5px;width:150px;text-align:right;color:var(--text-dim);}
+  .results-pnl.up{color:var(--up);}
+  .results-pnl.down{color:var(--down);}
+
+  /* ---------- Game screen ---------- */
+  .topbar{
+    display:flex;align-items:center;gap:18px;padding:10px 18px;border-bottom:1px solid var(--border);
+    background:var(--bg-panel);flex-shrink:0;flex-wrap:wrap;
+  }
+  .topbar .tb-item{font-family:var(--mono);font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:6px;}
+  .topbar .tb-item b{color:var(--text);}
+  .status-pill{
+    display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:20px;font-size:11px;
+    letter-spacing:1px;text-transform:uppercase;font-family:var(--mono);
+  }
+  .status-pill.running{background:rgba(61,220,132,.12);color:var(--up);}
+  .status-pill.paused{background:rgba(255,180,84,.12);color:var(--amber);}
+  .status-pill .blip{width:6px;height:6px;border-radius:50%;background:currentColor;animation:blink 1.4s step-end infinite;}
+  .topbar-spacer{flex:1;}
+
+  .grid{
+    flex:1;display:grid;grid-template-columns:1fr 320px;grid-template-rows:1fr auto;min-height:0;
+    grid-template-areas:"stocks side" "log log";
+    gap:1px;background:var(--border);overflow:hidden;
+  }
+  .pane{background:var(--bg);overflow:auto;padding:16px;}
+  #pane-stocks{grid-area:stocks;}
+  #pane-side{grid-area:side;display:flex;flex-direction:column;gap:16px;}
+  #pane-log{grid-area:log;max-height:150px;}
+
+  table.stock-table{width:100%;border-collapse:collapse;font-size:13px;}
+  table.stock-table thead th{
+    text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:var(--text-faint);
+    padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);
+  }
+  table.stock-table tbody tr{border-bottom:1px solid var(--border-soft);}
+  table.stock-table tbody tr:hover{background:var(--bg-panel);}
+  table.stock-table tbody tr.index-row{background:rgba(255,180,84,.05);}
+  table.stock-table tbody tr.index-row:hover{background:rgba(255,180,84,.09);}
+  table.stock-table tbody tr.index-row .sector-tag{border-color:var(--amber-dim);color:var(--amber);}
+  table.stock-table td{padding:10px 8px;vertical-align:middle;}
+  .sym-cell .sym{font-family:var(--mono);font-weight:700;font-size:14px;color:var(--text);}
+  .sym-cell .name{color:var(--text-dim);font-size:11.5px;}
+  .sector-tag{
+    display:inline-block;font-size:9.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--text-faint);
+    border:1px solid var(--border);border-radius:10px;padding:1px 7px;margin-top:3px;
+  }
+  .div-tag{
+    display:inline-block;font-size:9.5px;letter-spacing:.4px;color:var(--cyan);
+    border:1px solid rgba(79,209,197,.35);background:rgba(79,209,197,.08);border-radius:10px;
+    padding:1px 7px;margin-top:3px;margin-left:4px;
+  }
+  .price-cell{font-family:var(--mono);font-weight:600;font-size:14px;}
+  .avg-cost{font-family:var(--mono);font-weight:400;font-size:10.5px;margin-top:2px;color:var(--text-dim);}
+  .avg-cost.up{color:var(--up);}
+  .avg-cost.down{color:var(--down);}
+  .avg-cost-pct{opacity:.85;}
+  .chg-cell{font-family:var(--mono);font-size:12.5px;}
+  .chg-cell.up{color:var(--up);}
+  .chg-cell.down{color:var(--down);}
+  .spark-cell canvas{display:block;}
+  .trade-cell{display:flex;align-items:center;gap:6px;}
+  .qty-input{width:52px;padding:6px;text-align:center;background:var(--bg-panel-alt);border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:12.5px;}
+  .qty-input:focus{outline:none;border-color:var(--amber);}
+
+  .stat-row{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;padding:4px 0;}
+  .stat-row .k{color:var(--text-dim);}
+  .stat-row .v{font-family:var(--mono);font-weight:600;}
+  .stat-row .v.big{font-size:20px;}
+  .holdings-list{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;}
+  .holdings-list li{display:flex;justify-content:space-between;font-size:12.5px;font-family:var(--mono);color:var(--text-dim);}
+  .holdings-list li b{color:var(--text);}
+  .holdings-empty{color:var(--text-faint);font-size:12px;font-style:italic;}
+
+  .leader-list{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;}
+  .leader-list li{
+    display:flex;align-items:center;gap:8px;font-size:12.5px;background:var(--bg-panel-alt);
+    border:1px solid var(--border-soft);border-radius:3px;padding:7px 10px;
+  }
+  .leader-list .rank{color:var(--text-faint);font-family:var(--mono);width:16px;}
+  .leader-list .lname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .leader-list .lval{font-family:var(--mono);font-weight:600;}
+
+  .log-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column-reverse;gap:4px;}
+  .log-list li{font-size:12px;color:var(--text-dim);font-family:var(--mono);}
+  .log-list li .t{color:var(--text-faint);margin-right:8px;}
+  .log-list li.news{color:var(--amber);}
+
+  .host-controls{display:flex;gap:8px;}
+  .footer-hint{color:var(--text-faint);font-size:11px;text-align:center;margin-top:14px;}
+
+  @media (max-width:820px){
+    .grid{grid-template-columns:1fr;grid-template-areas:"stocks" "side" "log";}
+    #pane-log{max-height:120px;}
+  }
+</style>
+</head>
+<body>
+
+  <div id="tape-wrap" class="hidden">
+    <div id="tape-track"></div>
+  </div>
+
+  <div class="app-main">
+
+    <!-- LANDING -->
+    <div id="screen-landing" class="screen">
+      <div class="landing-inner">
+        <div class="brand">TICKER<span class="cursor"></span></div>
+        <div class="tagline">peer-to-peer market simulator</div>
+
+        <div class="landing-actions">
+          <button class="btn btn-primary" id="btn-host">Host a game</button>
+          <div class="divider-or">or</div>
+          <div class="field-label" style="text-align:center;">Join with a room code</div>
+          <div class="join-row">
+            <input id="input-join-code" class="text-input" maxlength="5" placeholder="ABCDE">
+            <button class="btn" id="btn-join">Join</button>
+          </div>
+        </div>
+        <div class="err-msg" id="landing-err"></div>
+      </div>
+    </div>
+
+    <!-- NAME PROMPT (shared) -->
+    <div id="screen-name" class="screen hidden">
+      <div class="landing-inner">
+        <div class="field-label" style="text-align:center;">Trader name</div>
+        <input id="input-name" class="text-input" maxlength="16" placeholder="YOUR NAME" style="text-transform:none;letter-spacing:.5px;text-align:center;">
+        <div style="margin-top:16px;">
+          <button class="btn btn-primary" id="btn-confirm-name">Continue</button>
+        </div>
+        <div class="err-msg" id="name-err"></div>
+      </div>
+    </div>
+
+    <!-- CONNECTING -->
+    <div id="screen-connecting" class="screen hidden">
+      <div class="landing-inner">
+        <div class="brand" style="font-size:32px;">TICKER<span class="cursor"></span></div>
+        <div class="tagline" id="connecting-status">Connecting…</div>
+        <div class="mono" style="color:var(--text-dim);font-size:13px;margin-bottom:10px;">Room <span id="connecting-code" style="color:var(--amber);letter-spacing:2px;">-----</span></div>
+        <div class="err-msg" id="connecting-err"></div>
+        <div class="mono" id="connecting-debug" style="color:var(--text-faint);font-size:10.5px;margin-top:6px;word-break:break-all;"></div>
+        <div style="margin-top:18px;">
+          <button class="btn hidden" id="btn-connecting-retry">Back</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOBBY -->
+    <div id="screen-lobby" class="screen hidden">
+      <div class="panel lobby-card">
+        <div class="section-title" style="text-align:center;">room code</div>
+        <div class="room-code-display" id="lobby-room-code">-----</div>
+        <div class="room-code-hint">Share this code — other traders enter it to join</div>
+
+        <div class="section-title">traders (<span id="lobby-player-count">0</span>)</div>
+        <ul class="lobby-players" id="lobby-players"></ul>
+
+        <div id="lobby-settings-host" class="settings-block hidden">
+          <div class="section-title">market settings</div>
+
+          <div class="settings-row">
+            <div class="field-label"><span>Game mode</span></div>
+            <div class="mode-toggle">
+              <button type="button" class="mode-btn active" id="mode-btn-classic">
+                <span class="mode-btn-title">Classic</span>
+                <span class="mode-btn-desc">Standard pace, no fees. Runs until you end it.</span>
+              </button>
+              <button type="button" class="mode-btn" id="mode-btn-daytrading">
+                <span class="mode-btn-title">Day Trading</span>
+                <span class="mode-btn-desc">Fast ticks, a fee per trade, timed session.</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-row hidden" id="settings-row-sessionlen">
+            <div class="field-label"><span>Session length</span><span class="val" id="setting-sessionlen-label">40 ticks</span></div>
+            <input type="range" id="setting-sessionlen" min="15" max="90" step="5" value="40">
+          </div>
+
+          <div class="settings-row">
+            <div class="field-label"><span>Number of stocks</span><span class="val" id="setting-stockcount-label">25</span></div>
+            <input type="range" id="setting-stockcount" min="2" max="25" step="1" value="25">
+          </div>
+          <div class="settings-row">
+            <div class="field-label"><span>Volatility</span><span class="val" id="setting-vol-label">1.0x</span></div>
+            <input type="range" id="setting-vol" min="0.3" max="3" step="0.1" value="1">
+          </div>
+          <div class="settings-row">
+            <div class="field-label"><span>Market trend</span><span class="val" id="setting-trend-label">Neutral (0.00)</span></div>
+            <input type="range" id="setting-trend" min="-1" max="1" step="0.01" value="0">
+          </div>
+          <div class="chip-preview" id="settings-chip-preview"></div>
+        </div>
+
+        <div id="lobby-settings-readonly" class="settings-block hidden">
+          <div class="section-title">market settings</div>
+          <div class="mode-readonly-badge" id="settings-mode-badge">Classic</div>
+          <div class="settings-readonly-text" id="settings-readonly-text"></div>
+          <div class="chip-preview" id="settings-chip-preview-ro"></div>
+        </div>
+
+        <div id="lobby-host-controls" class="hidden" style="text-align:center;">
+          <button class="btn btn-primary" id="btn-start-game" style="width:100%;">Start game</button>
+        </div>
+        <div id="lobby-wait-msg" class="lobby-status hidden">Waiting for host to start the game…</div>
+        <div class="err-msg" id="lobby-err"></div>
+      </div>
+    </div>
+
+    <!-- RESULTS -->
+    <div id="screen-results" class="screen hidden">
+      <div class="panel lobby-card">
+        <div class="section-title" style="text-align:center;">market closed</div>
+        <div class="brand" style="font-size:30px;text-align:center;">FINAL RESULTS</div>
+        <div class="tagline" id="results-mode-label">Classic</div>
+        <ul class="results-list" id="results-list"></ul>
+        <button class="btn btn-primary" id="btn-results-exit" style="width:100%;">Back to menu</button>
+      </div>
+    </div>
+
+    <!-- GAME -->
+    <div id="screen-game" class="screen hidden" style="padding:0;align-items:stretch;justify-content:flex-start;">
+      <div class="topbar">
+        <div class="tb-item">ROOM <b id="tb-room-code">-----</b></div>
+        <div class="tb-item">TICK <b id="tb-tick">0</b></div>
+        <div class="tb-item hidden" id="tb-fee-item">FEE <b id="tb-fee">$0.00</b>/trade</div>
+        <span class="status-pill running" id="tb-status"><span class="blip"></span><span id="tb-status-text">LIVE</span></span>
+        <div class="topbar-spacer"></div>
+        <div class="host-controls" id="tb-host-controls">
+          <button class="btn btn-small" id="btn-pause">Pause</button>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div id="pane-stocks" class="pane">
+          <table class="stock-table">
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Price</th><th>Chg</th><th>Trend</th><th>Trade</th>
+              </tr>
+            </thead>
+            <tbody id="stock-tbody"></tbody>
+          </table>
+        </div>
+
+        <div id="pane-side" class="pane">
+          <div class="panel" style="padding:14px;">
+            <div class="section-title">your portfolio</div>
+            <div class="stat-row"><span class="k">Cash</span><span class="v" id="side-cash">$0.00</span></div>
+            <div class="stat-row"><span class="k">Holdings value</span><span class="v" id="side-holdings-value">$0.00</span></div>
+            <div class="stat-row"><span class="k">Net worth</span><span class="v big" id="side-networth">$0.00</span></div>
+            <div class="stat-row"><span class="k">Dividends earned</span><span class="v" id="side-dividends" style="color:var(--cyan);">$0.00</span></div>
+            <ul class="holdings-list" id="side-holdings"></ul>
+          </div>
+          <div class="panel" style="padding:14px;">
+            <div class="section-title">leaderboard</div>
+            <ul class="leader-list" id="leaderboard"></ul>
+          </div>
+        </div>
+
+        <div id="pane-log" class="pane">
+          <div class="section-title">activity &amp; news</div>
+          <ul class="log-list" id="log-list"></ul>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ============================================================
+     CONSTANTS / DATA
+  ============================================================ */
+  const STARTING_CASH = 10000;
+  const HISTORY_LEN = 40;
+  const PLAYER_COLORS = ['#ffb454','#4fd1c5','#a78bfa','#ff8fa3','#7ee787','#f2cc60','#6bb1ff','#ff9e64'];
+
+  const GAME_MODES = {
+    classic:    { label:'Classic',     tickMs:3000, commission:0,    desc:'Standard pace, no trading fees. Runs until the host pauses or ends it.' },
+    daytrading: { label:'Day Trading', tickMs:1200, commission:2.5,  desc:'Fast ticks and a fee on every trade. The market closes automatically at the end of the session — highest net worth wins.' }
+  };
+  const DEFAULT_SESSION_LENGTH = 40;
+  const MIN_SESSION_LENGTH = 15;
+  const MAX_SESSION_LENGTH = 90;
+  const ROOM_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+  const STOCK_DEFS = [
+    {sym:'HLX', name:'Helix Technologies', sector:'Tech',           price:142.50, vol:0.035},
+    {sym:'SLR', name:'Solaris Energy',     sector:'Energy',         price:58.20,  vol:0.030},
+    {sym:'VRD', name:'Veridian Health',    sector:'Health',         price:96.10,  vol:0.020},
+    {sym:'UCB', name:'Union Capital Bank', sector:'Finance',        price:74.85,  vol:0.018},
+    {sym:'NGR', name:'Northgate Retail',   sector:'Consumer',       price:33.40,  vol:0.025},
+    {sym:'FRM', name:'Ferrum Industrial',  sector:'Industrial',     price:81.75,  vol:0.022},
+    {sym:'NVC', name:'NovaChain',          sector:'Crypto',         price:210.00, vol:0.090},
+    {sym:'CRS', name:'Cornerstone Realty', sector:'Real Estate',    price:64.30,  vol:0.015},
+    {sym:'QNT', name:'Quanta Systems',     sector:'Tech',           price:118.90, vol:0.032},
+    {sym:'BOR', name:'Boreal Power',       sector:'Energy',         price:39.75,  vol:0.026},
+    {sym:'AUB', name:'Aurora Biotech',     sector:'Health',         price:152.30, vol:0.045},
+    {sym:'MDT', name:'Meridian Trust',     sector:'Finance',        price:61.15,  vol:0.016},
+    {sym:'BBG', name:'Bright Basket Grocers', sector:'Consumer',    price:27.85,  vol:0.019},
+    {sym:'KSA', name:'Kestrel Aerospace',  sector:'Industrial',     price:134.60, vol:0.027},
+    {sym:'PNT', name:'Pinnacle Telecom',   sector:'Telecom',        price:45.60,  vol:0.020},
+    {sym:'CSU', name:'Cascade Utilities',  sector:'Utilities',      price:52.10,  vol:0.012},
+    {sym:'ATM', name:'Atlas Materials',    sector:'Materials',      price:67.30,  vol:0.024},
+    {sym:'VNG', name:'Vanguard Logistics', sector:'Transportation', price:88.40,  vol:0.021},
+    {sym:'LUM', name:'Lumen Studios',      sector:'Media',          price:54.75,  vol:0.028},
+    {sym:'HGF', name:'Harvest Grove Foods',sector:'Agriculture',    price:41.20,  vol:0.017},
+    {sym:'SNL', name:'Sentinel Insurance Group', sector:'Insurance',       price:85.40, vol:0.014},
+    {sym:'BCN', name:'Beacon Properties REIT',   sector:'Real Estate',     price:58.90, vol:0.013},
+    {sym:'RWD', name:'Redwood Communications',   sector:'Telecom',         price:39.20, vol:0.017},
+    {sym:'IRB', name:'Ironbridge Utilities',     sector:'Utilities',       price:47.60, vol:0.011},
+    {sym:'EVW', name:'Everwell Consumer Staples',sector:'Consumer Staples',price:62.15, vol:0.014},
+  ];
+
+  const NEWS_POOL = [
+    {sector:'Tech', text:'Helix Technologies unveils breakthrough chip design', mult:1.12},
+    {sector:'Tech', text:'Regulators open probe into Big Tech practices', mult:0.91},
+    {sector:'Energy', text:'Oil prices spike on supply disruption fears', mult:1.09},
+    {sector:'Energy', text:'Solaris Energy misses quarterly output targets', mult:0.93},
+    {sector:'Health', text:'Veridian Health drug trial shows strong results', mult:1.15},
+    {sector:'Health', text:'Regulator delays approval for new therapy', mult:0.92},
+    {sector:'Finance', text:'Union Capital Bank beats earnings forecast', mult:1.07},
+    {sector:'Finance', text:'Rate hike fears rattle the banking sector', mult:0.94},
+    {sector:'Consumer', text:'Northgate Retail reports record holiday sales', mult:1.10},
+    {sector:'Consumer', text:'Consumer spending slows amid rising prices', mult:0.93},
+    {sector:'Industrial', text:'Ferrum Industrial lands major infrastructure deal', mult:1.11},
+    {sector:'Industrial', text:'Supply chain disruption hits manufacturers', mult:0.92},
+    {sector:'Crypto', text:'NovaChain surges after major exchange listing', mult:1.25},
+    {sector:'Crypto', text:'Regulatory crackdown sends crypto tumbling', mult:0.80},
+    {sector:'Real Estate', text:'Cornerstone Realty announces new development', mult:1.08},
+    {sector:'Real Estate', text:'Mortgage rates climb, housing demand cools', mult:0.94},
+    {sector:'Telecom', text:'Pinnacle Telecom lands major 5G infrastructure deal', mult:1.09},
+    {sector:'Telecom', text:'Pinnacle Telecom hit by network outage backlash', mult:0.93},
+    {sector:'Utilities', text:'Cascade Utilities secures long-term energy contract', mult:1.05},
+    {sector:'Utilities', text:'Regulators freeze utility rate increases', mult:0.95},
+    {sector:'Materials', text:'Atlas Materials benefits from surging commodity prices', mult:1.10},
+    {sector:'Materials', text:'Atlas Materials warns of rising input costs', mult:0.92},
+    {sector:'Transportation', text:'Vanguard Logistics expands fleet amid shipping boom', mult:1.08},
+    {sector:'Transportation', text:'Vanguard Logistics grounded by fuel cost spike', mult:0.91},
+    {sector:'Media', text:'Lumen Studios release breaks box office records', mult:1.14},
+    {sector:'Media', text:'Lumen Studios streaming service loses subscribers', mult:0.90},
+    {sector:'Agriculture', text:'Harvest Grove Foods reports bumper crop yields', mult:1.07},
+    {sector:'Agriculture', text:'Harvest Grove Foods hit by drought concerns', mult:0.94},
+    {sector:'Insurance', text:'Sentinel Insurance Group posts lower claims payouts', mult:1.06},
+    {sector:'Insurance', text:'Sentinel Insurance Group hit by major storm claims', mult:0.93},
+    {sector:'Consumer Staples', text:'Everwell Consumer Staples sees steady demand growth', mult:1.04},
+    {sector:'Consumer Staples', text:'Input costs squeeze consumer staples margins', mult:0.95},
+    {sector:null, text:'Markets rally on strong economic data', mult:1.05},
+    {sector:null, text:'Recession fears grip Wall Street', mult:0.91},
+    {sector:null, text:'Central bank signals steady rates ahead', mult:1.02},
+    {sector:null, text:'Volatility spikes amid geopolitical tension', mult:0.95},
+  ];
+
+  /* ============================================================
+     GLOBAL RUNTIME STATE
+  ============================================================ */
+  let isHost = false;
+  let peer = null;
+  let myId = null;
+  let myName = '';
+  let roomCode = null;
+  let pendingRole = null; // 'host' | 'join'
+  let joinTargetCode = null;
+
+  // Host-only
+  let connections = {};      // peerId -> DataConnection
+  let tickInterval = null;
+
+  // Authoritative game state (host owns the source of truth; clients hold last received copy)
+  let state = null;
+
+  const DEFAULT_SETTINGS = { stockCount: STOCK_DEFS.length, volMult: 1.0, mode: 'classic', sessionLength: DEFAULT_SESSION_LENGTH, trend: 0 };
+  const TREND_DRIFT_PER_TICK = 0.006; // at trend = ±1, average drift of ~0.6% per tick
+  const INDEX_START_PRICE = 1000;
+  const DIVIDEND_FRACTION = 1 / 5;      // roughly this share of in-play stocks pay dividends
+  const DIVIDEND_YIELD_MIN = 0.0008;    // per-tick yield range for whichever stocks are chosen
+  const DIVIDEND_YIELD_MAX = 0.0018;
+
+  function shuffleArray(arr){
+    const a = arr.slice();
+    for(let i = a.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  const STOCK_DEFS_BY_SYM = {};
+  STOCK_DEFS.forEach(s => { STOCK_DEFS_BY_SYM[s.sym] = s; });
+
+  function buildStocks(settings, order){
+    const symOrder = order || STOCK_DEFS.map(s => s.sym);
+    const count = Math.max(2, Math.min(symOrder.length, settings.stockCount));
+    const defs = symOrder.slice(0, count).map(sym => STOCK_DEFS_BY_SYM[sym]).filter(Boolean);
+
+    // randomly designate roughly 1/5 of the selected stocks as dividend payers
+    const numDividend = Math.max(1, Math.round(defs.length * DIVIDEND_FRACTION));
+    const dividendIdx = new Set();
+    while(dividendIdx.size < Math.min(numDividend, defs.length)){
+      dividendIdx.add(Math.floor(Math.random() * defs.length));
+    }
+
+    const stocks = defs.map((s, i) => ({
+      sym:s.sym, name:s.name, sector:s.sector,
+      vol: Math.round(s.vol * settings.volMult * 10000) / 10000,
+      price:s.price, prevPrice:s.price,
+      div: dividendIdx.has(i) ? +(DIVIDEND_YIELD_MIN + Math.random() * (DIVIDEND_YIELD_MAX - DIVIDEND_YIELD_MIN)).toFixed(5) : 0,
+      history:[s.price]
+    }));
+    stocks.push({
+      sym:'MKT', name:'Market Index Fund', sector:'Index', isIndex:true,
+      vol:0, price:INDEX_START_PRICE, prevPrice:INDEX_START_PRICE, div:0,
+      history:[INDEX_START_PRICE]
+    });
+    return stocks;
+  }
+
+  function freshState(){
+    const settings = Object.assign({}, DEFAULT_SETTINGS);
+    const stockOrder = shuffleArray(STOCK_DEFS.map(s => s.sym));
+    return {
+      roomCode: null,
+      started: false,
+      running: false,
+      finished: false,
+      tick: 0,
+      settings,
+      stockOrder,        // randomized once per game; stays stable while the host tweaks other settings
+      stocks: buildStocks(settings, stockOrder),
+      players: {},      // peerId -> {id,name,color,cash,holdings:{sym:qty},netWorth,netWorthHistory:[]}
+      log: []           // {tick, text, kind:'trade'|'news'|'system'}
+    };
+  }
+
+  /* ============================================================
+     UTIL
+  ============================================================ */
+  function $(id){ return document.getElementById(id); }
+  function fmtMoney(n){
+    const neg = n < 0;
+    const v = Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    return (neg?'-$':'$') + v;
+  }
+  function fmtPct(n){
+    const sign = n >= 0 ? '+' : '';
+    return sign + n.toFixed(2) + '%';
+  }
+  function gaussianRandom(){
+    let u = 0, v = 0;
+    while(u === 0) u = Math.random();
+    while(v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2*Math.PI*v);
+  }
+  function randomRoomCode(){
+    let s = '';
+    for(let i=0;i<5;i++) s += ROOM_CODE_CHARS[Math.floor(Math.random()*ROOM_CODE_CHARS.length)];
+    return s;
+  }
+  function colorForIndex(i){ return PLAYER_COLORS[i % PLAYER_COLORS.length]; }
+  function trendLabel(t){
+    if(t > 0.15) return 'Bullish ▲ (' + t.toFixed(2) + ')';
+    if(t < -0.15) return 'Bearish ▼ (' + t.toFixed(2) + ')';
+    return 'Neutral (' + t.toFixed(2) + ')';
+  }
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function showScreen(id){
+    ['screen-landing','screen-name','screen-connecting','screen-lobby','screen-game','screen-results'].forEach(s=>{
+      $(s).classList.toggle('hidden', s !== id);
+    });
+    $('tape-wrap').classList.toggle('hidden', id !== 'screen-game');
+  }
+
+  /* ============================================================
+     GAME LOGIC (host authoritative)
+  ============================================================ */
+  function addPlayer(id, name){
+    const idx = Object.keys(state.players).length;
+    state.players[id] = {
+      id, name: name || ('Trader ' + (idx+1)),
+      color: colorForIndex(idx),
+      cash: STARTING_CASH,
+      holdings: {},
+      costBasis: {},   // sym -> average price paid per share (incl. fees), for gain/loss display
+      dividendsEarned: 0,
+      netWorth: STARTING_CASH,
+      netWorthHistory: [STARTING_CASH]
+    };
+    pushLog(`${state.players[id].name} joined the market`, 'system');
+  }
+
+  function removePlayer(id){
+    if(state.players[id]){
+      pushLog(`${state.players[id].name} left the market`, 'system');
+      delete state.players[id];
+    }
+  }
+
+  function pushLog(text, kind){
+    state.log.push({tick: state.tick, text, kind: kind||'trade'});
+    if(state.log.length > 40) state.log.shift();
+  }
+
+  function stockBySym(sym){ return state.stocks.find(s=>s.sym===sym); }
+
+  function recomputeNetWorth(){
+    Object.values(state.players).forEach(p=>{
+      let hv = 0;
+      Object.keys(p.holdings).forEach(sym=>{
+        const st = stockBySym(sym);
+        if(st) hv += st.price * p.holdings[sym];
+      });
+      p.netWorth = p.cash + hv;
+      p.netWorthHistory.push(p.netWorth);
+      if(p.netWorthHistory.length > HISTORY_LEN) p.netWorthHistory.shift();
+    });
+  }
+
+  function currentModeCfg(){
+    return (state && state.settings && GAME_MODES[state.settings.mode]) ? GAME_MODES[state.settings.mode] : GAME_MODES.classic;
+  }
+
+  function executeOrder(playerId, symbol, side, qty){
+    if(!state || state.finished) return;
+    const player = state.players[playerId];
+    const st = stockBySym(symbol);
+    qty = Math.floor(Number(qty));
+    if(!player || !st || !qty || qty <= 0) return;
+    const commission = currentModeCfg().commission || 0;
+    if(!player.costBasis) player.costBasis = {};
+
+    if(side === 'buy'){
+      const cost = st.price * qty + commission;
+      if(player.cash + 1e-6 < cost) return; // insufficient funds
+      player.cash -= cost;
+      const prevQty = player.holdings[symbol] || 0;
+      const prevAvg = player.costBasis[symbol] || 0;
+      const newQty = prevQty + qty;
+      player.costBasis[symbol] = ((prevAvg * prevQty) + cost) / newQty;
+      player.holdings[symbol] = newQty;
+      const feeNote = commission ? ` (+${fmtMoney(commission)} fee)` : '';
+      pushLog(`${player.name} bought ${qty} ${symbol} @ ${fmtMoney(st.price)}${feeNote}`, 'trade');
+    } else if(side === 'sell'){
+      const held = player.holdings[symbol] || 0;
+      if(held < qty) return;
+      const proceeds = Math.max(0, st.price * qty - commission);
+      player.holdings[symbol] = held - qty;
+      if(player.holdings[symbol] === 0){
+        delete player.holdings[symbol];
+        delete player.costBasis[symbol];
+      }
+      player.cash += proceeds;
+      const feeNote = commission ? ` (-${fmtMoney(commission)} fee)` : '';
+      pushLog(`${player.name} sold ${qty} ${symbol} @ ${fmtMoney(st.price)}${feeNote}`, 'trade');
+    }
+    recomputeNetWorth();
+    broadcastState();
+    renderAll();
+  }
+
+  function marketTick(){
+    state.tick++;
+    const components = state.stocks.filter(s=>!s.isIndex);
+    const drift = (state.settings.trend || 0) * TREND_DRIFT_PER_TICK;
+
+    // random walk (index fund is excluded — it's derived below)
+    components.forEach(st=>{
+      st.prevPrice = st.price;
+      const shock = gaussianRandom() * st.vol + drift;
+      let next = st.price * (1 + shock);
+      if(next < 0.5) next = 0.5;
+      st.price = next;
+    });
+
+    // occasional news event (never targets the index fund directly)
+    if(Math.random() < 0.22){
+      const news = NEWS_POOL[Math.floor(Math.random()*NEWS_POOL.length)];
+      components.forEach(st=>{
+        if(news.sector === null || st.sector === news.sector){
+          st.price = Math.max(0.5, st.price * news.mult);
+        }
+      });
+      pushLog(news.text, 'news');
+    }
+
+    // index fund tracks the equal-weighted average return of its component stocks
+    const idx = state.stocks.find(s=>s.isIndex);
+    if(idx && components.length){
+      idx.prevPrice = idx.price;
+      const avgReturn = components.reduce((sum,st)=> sum + (st.price - st.prevPrice)/st.prevPrice, 0) / components.length;
+      idx.price = Math.max(0.5, idx.price * (1 + avgReturn));
+    }
+
+    // dividend payouts — a subset of stocks pay shareholders a small cash amount every tick
+    components.forEach(st=>{
+      if(!st.div) return;
+      Object.values(state.players).forEach(p=>{
+        const qty = p.holdings[st.sym] || 0;
+        if(qty > 0){
+          const payout = st.price * qty * st.div;
+          p.cash += payout;
+          p.dividendsEarned = (p.dividendsEarned || 0) + payout;
+        }
+      });
+    });
+
+    state.stocks.forEach(st=>{
+      st.history.push(st.price);
+      if(st.history.length > HISTORY_LEN) st.history.shift();
+    });
+
+    recomputeNetWorth();
+
+    if(state.settings.mode === 'daytrading' && state.tick >= state.settings.sessionLength){
+      finishSession('Trading day complete — the market has closed');
+      return; // finishSession already broadcasts + renders
+    }
+
+    broadcastState();
+    renderAll();
+  }
+
+  function finishSession(reason){
+    if(!isHost || !state || state.finished) return;
+    state.finished = true;
+    stopTicking();
+    pushLog(reason || 'Trading session closed — final results are in', 'system');
+    broadcastState();
+    showScreen('screen-results');
+    renderResults();
+  }
+
+  function startTicking(){
+    if(tickInterval) clearInterval(tickInterval);
+    state.running = true;
+    tickInterval = setInterval(marketTick, currentModeCfg().tickMs);
+  }
+  function stopTicking(){
+    state.running = false;
+    if(tickInterval) clearInterval(tickInterval);
+    tickInterval = null;
+  }
+
+  /* ============================================================
+     NETWORKING
+  ============================================================ */
+  function broadcastState(){
+    if(!isHost) return;
+    const msg = {t:'state', state: serializeState()};
+    Object.values(connections).forEach(c=>{
+      try{ if(c.open) c.send(msg); }catch(e){}
+    });
+  }
+
+  function serializeState(){
+    // structuredClone-safe plain object
+    return JSON.parse(JSON.stringify(state));
+  }
+
+  const ICE_CONFIG = {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun.relay.metered.ca:80' },
+      { urls: 'stun:global.stun.twilio.com:3478' }
+    ]
+  };
+  const PEER_OPTS = { debug: 0, config: ICE_CONFIG };
+
+  function destroyPeer(){
+    if(peer){ try{ peer.destroy(); }catch(e){} }
+    peer = null;
+    connections = {};
+    stopTicking();
+  }
+
+  function dbg(msg){
+    console.log('[TICKER] ' + msg);
+    const el = $('connecting-debug');
+    if(el) el.textContent = msg;
+  }
+
+  function setConnectingUI(status, errText, showRetry, code){
+    showScreen('screen-connecting');
+    $('connecting-status').textContent = status;
+    $('connecting-err').textContent = errText || '';
+    $('connecting-code').textContent = code || joinTargetCode || roomCode || '-----';
+    $('btn-connecting-retry').classList.toggle('hidden', !showRetry);
+  }
+
+  $('btn-connecting-retry').addEventListener('click', ()=>{
+    destroyPeer();
+    state = null;
+    qtyState = {};
+    $('landing-err').textContent = '';
+    $('input-join-code').value = '';
+    showScreen('screen-landing');
+  });
+
+  function setupHost(){
+    isHost = true;
+    pendingRole = 'host';
+    setConnectingUI('Setting up your room…', '', false, '');
+    attemptHostPeer();
+  }
+
+  function attemptHostPeer(code, retriesLeft){
+    if(retriesLeft === undefined) retriesLeft = 5;
+    roomCode = code || randomRoomCode();
+    setConnectingUI('Setting up your room…', '', false, roomCode);
+    dbg('Requesting host peer id "' + roomCode + '" from signaling server…');
+    if(peer){ try{ peer.destroy(); }catch(e){} }
+    peer = new Peer(roomCode, PEER_OPTS);
+
+    peer.on('open', id=>{
+      dbg('Host peer open. My id: ' + id);
+      myId = id;
+      state = freshState();
+      state.roomCode = roomCode;
+      addPlayer(myId, myName || 'Host');
+      $('lobby-room-code').textContent = roomCode;
+      $('tb-room-code').textContent = roomCode;
+      $('lobby-host-controls').classList.remove('hidden');
+      $('lobby-wait-msg').classList.add('hidden');
+      $('tb-host-controls').classList.remove('hidden');
+      $('lobby-settings-host').classList.remove('hidden');
+      $('lobby-settings-readonly').classList.add('hidden');
+      $('setting-stockcount').max = STOCK_DEFS.length;
+      $('setting-stockcount').value = state.settings.stockCount;
+      $('setting-stockcount-label').textContent = state.settings.stockCount;
+      $('setting-vol').value = state.settings.volMult;
+      $('setting-vol-label').textContent = state.settings.volMult.toFixed(1) + 'x';
+      $('setting-trend').value = state.settings.trend;
+      $('setting-trend-label').textContent = trendLabel(state.settings.trend);
+      $('setting-sessionlen').min = MIN_SESSION_LENGTH;
+      $('setting-sessionlen').max = MAX_SESSION_LENGTH;
+      $('setting-sessionlen').value = state.settings.sessionLength;
+      updateModeButtons();
+      showScreen('screen-lobby');
+      renderLobby();
+    });
+
+    peer.on('connection', conn=>{
+      dbg('Incoming connection from peer: ' + conn.peer);
+      connections[conn.peer] = conn;
+      conn.on('data', data => handleHostMessage(conn, data));
+      conn.on('close', ()=>{
+        dbg('Connection closed: ' + conn.peer);
+        delete connections[conn.peer];
+        if(state){
+          removePlayer(conn.peer);
+          broadcastState();
+          if(state.started) renderAll(); else renderLobby();
+        }
+      });
+      conn.on('error', err=>{
+        dbg('Connection error from ' + conn.peer + ': ' + (err && err.message ? err.message : err));
+        delete connections[conn.peer];
+      });
+      conn.on('open', ()=>{ dbg('Connection open with: ' + conn.peer); });
+    });
+
+    peer.on('disconnected', ()=>{
+      dbg('Host peer disconnected from signaling server. Attempting reconnect…');
+      if(peer && !peer.destroyed){
+        try{ peer.reconnect(); }catch(e){}
+      }
+    });
+
+    peer.on('error', err=>{
+      const type = err && err.type;
+      dbg('Host peer error: ' + type + (err && err.message ? (' — ' + err.message) : ''));
+      if(type === 'unavailable-id' && retriesLeft > 0){
+        attemptHostPeer(null, retriesLeft - 1);
+      } else if(!state){
+        setConnectingUI('Couldn\'t create a room', describePeerError(type), true, roomCode);
+      }
+    });
+  }
+
+  function describePeerError(type){
+    switch(type){
+      case 'browser-incompatible': return 'This browser doesn\'t support WebRTC. Try Chrome, Firefox, Edge, or Safari.';
+      case 'network': return 'Network error reaching the connection server. Check your internet connection.';
+      case 'server-error':
+      case 'socket-error':
+      case 'socket-closed': return 'The connection server is unreachable right now. Please try again.';
+      case 'peer-unavailable': return 'That room code doesn\'t exist, or the host has closed the game.';
+      case 'unavailable-id': return 'That room code is already in use. Try again for a new one.';
+      case 'disconnected': return 'Lost connection to the signaling server.';
+      default: return type ? ('Error: ' + type) : 'Something went wrong. Please try again.';
+    }
+  }
+
+  function handleHostMessage(conn, data){
+    if(!data || !data.t) return;
+    if(data.t === 'join'){
+      if(!state.players[conn.peer]){
+        addPlayer(conn.peer, data.name);
+      }
+      conn.send({t:'welcome', id: conn.peer, roomCode: state.roomCode});
+      broadcastState();
+      if(state.started) renderAll(); else renderLobby();
+    } else if(data.t === 'order'){
+      if(state.started && !state.finished){
+        executeOrder(conn.peer, data.symbol, data.side, data.qty);
+      }
+    }
+  }
+
+  function setupJoin(code){
+    isHost = false;
+    pendingRole = 'join';
+    joinTargetCode = code.toUpperCase();
+    setConnectingUI('Connecting to room…', '', false, joinTargetCode);
+    dbg('Requesting a peer id from signaling server…');
+
+    if(peer){ try{ peer.destroy(); }catch(e){} }
+    connections = {};
+    peer = new Peer(undefined, PEER_OPTS);
+
+    let settled = false;
+    const fail = (msg)=>{
+      if(settled) return;
+      settled = true;
+      setConnectingUI('Couldn\'t join room', msg, true, joinTargetCode);
+    };
+
+    peer.on('open', id=>{
+      myId = id;
+      dbg('My peer id: ' + id + '. Dialing host "' + joinTargetCode + '"…');
+      const conn = peer.connect(joinTargetCode, {reliable:true});
+
+      conn.on('open', ()=>{
+        dbg('Data channel open with host.');
+        settled = true;
+        conn.send({t:'join', name: myName});
+        connections['host'] = conn;
+        showScreen('screen-lobby');
+        $('lobby-room-code').textContent = joinTargetCode;
+        $('lobby-host-controls').classList.add('hidden');
+        $('lobby-wait-msg').classList.remove('hidden');
+        $('lobby-settings-host').classList.add('hidden');
+        $('lobby-settings-readonly').classList.remove('hidden');
+      });
+
+      conn.on('data', data => handleClientMessage(data));
+
+      conn.on('close', ()=>{
+        dbg('Connection to host closed.');
+        onHostDisconnected();
+      });
+
+      conn.on('error', err=>{
+        dbg('Connection error: ' + (err && err.message ? err.message : err));
+        fail('Could not reach room "' + joinTargetCode + '". Check the code and try again.');
+      });
+
+      setTimeout(()=>{
+        if(!settled) dbg('Still waiting after 12s — no response from host peer.');
+        fail('Room "' + joinTargetCode + '" not found, or the host isn\'t online.');
+      }, 12000);
+    });
+
+    peer.on('disconnected', ()=>{
+      dbg('Disconnected from signaling server before connecting.');
+      if(!settled){
+        fail('Lost connection to the signaling server. Please try again.');
+      }
+    });
+
+    peer.on('error', err=>{
+      dbg('Peer error: ' + (err && err.type) + (err && err.message ? (' — ' + err.message) : ''));
+      fail(describePeerError(err && err.type));
+    });
+  }
+
+  function handleClientMessage(data){
+    if(!data || !data.t) return;
+    if(data.t === 'welcome'){
+      myId = data.id;
+      roomCode = data.roomCode;
+    } else if(data.t === 'state'){
+      const wasStarted = state && state.started;
+      const wasFinished = state && state.finished;
+      state = data.state;
+      if(state.started && !wasStarted){
+        showScreen('screen-game');
+        $('tb-room-code').textContent = state.roomCode;
+      }
+      if(state.finished && !wasFinished){
+        showScreen('screen-results');
+      }
+      if(state.finished){
+        renderResults();
+      } else if(state.started){
+        renderAll();
+      } else {
+        renderLobby();
+      }
+    }
+  }
+
+  function onHostDisconnected(){
+    stopTicking();
+    if(state && state.finished){
+      // session already concluded — nothing more to do
+    } else if(state && state.started){
+      pushClientOnlyNotice('Connection to host lost. The host may need to restart the game.');
+    } else {
+      setConnectingUI('Host disconnected', 'The host left before starting the game.', true, joinTargetCode);
+    }
+  }
+  function pushClientOnlyNotice(text){
+    if(!state) return;
+    state.log.push({tick: state.tick, text, kind:'news'});
+    renderAll();
+  }
+
+  function sendOrder(symbol, side, qty){
+    if(isHost){
+      executeOrder(myId, symbol, side, qty);
+    } else {
+      const conn = connections['host'];
+      if(conn && conn.open) conn.send({t:'order', symbol, side, qty});
+    }
+  }
+
+  /* ============================================================
+     RENDERING
+  ============================================================ */
+  function renderLobby(){
+    if(!state) return;
+    const list = Object.values(state.players);
+    $('lobby-player-count').textContent = list.length;
+    $('lobby-players').innerHTML = list.map(p=>{
+      const youTag = p.id === myId ? '<span class="you-tag">you</span>' : '';
+      return `<li><span class="dot" style="background:${p.color}"></span>${escapeHtml(p.name)}${youTag}</li>`;
+    }).join('');
+
+    if(state.settings){
+      const s = state.settings;
+      const cfg = GAME_MODES[s.mode] || GAME_MODES.classic;
+      const symbols = state.stocks.filter(x=>!x.isIndex).map(x=>x.sym).join(' · ');
+      let summary = `${s.stockCount} stocks · ${s.volMult.toFixed(1)}x volatility · ${trendLabel(s.trend||0)} · + Market Index Fund`;
+      if(s.mode === 'daytrading'){
+        summary += ` · ${s.sessionLength} ticks/session · ${fmtMoney(cfg.commission)} fee/trade`;
+      }
+      if(isHost){
+        $('settings-chip-preview').textContent = symbols;
+        updateModeButtons();
+      } else {
+        $('settings-mode-badge').textContent = cfg.label;
+        $('settings-readonly-text').textContent = summary;
+        $('settings-chip-preview-ro').textContent = symbols;
+      }
+    }
+  }
+
+  function updateModeButtons(){
+    if(!state) return;
+    const m = state.settings.mode;
+    $('mode-btn-classic').classList.toggle('active', m === 'classic');
+    $('mode-btn-daytrading').classList.toggle('active', m === 'daytrading');
+    $('settings-row-sessionlen').classList.toggle('hidden', m !== 'daytrading');
+    if(m === 'daytrading') updateSessionLenLabel();
+  }
+
+  function updateSessionLenLabel(){
+    if(!state) return;
+    const secs = Math.round(state.settings.sessionLength * GAME_MODES.daytrading.tickMs / 1000);
+    $('setting-sessionlen-label').textContent = state.settings.sessionLength + ' ticks (~' + secs + 's)';
+  }
+
+  function renderResults(){
+    if(!state) return;
+    const cfg = currentModeCfg();
+    $('results-mode-label').textContent = cfg.label + ' session complete';
+    const ranked = Object.values(state.players).slice().sort((a,b)=>b.netWorth-a.netWorth);
+    $('results-list').innerHTML = ranked.map((p,i)=>{
+      const pnl = p.netWorth - STARTING_CASH;
+      const pct = STARTING_CASH ? (pnl / STARTING_CASH * 100) : 0;
+      const cls = pnl >= 0 ? 'up' : 'down';
+      const medal = i===0 ? '🥇' : i===1 ? '🥈' : i===2 ? '🥉' : (i+1) + '.';
+      const youTag = p.id === myId ? ' (you)' : '';
+      return `<li class="results-row ${i===0?'first':''}">
+        <span class="results-rank">${medal}</span>
+        <span class="dot" style="background:${p.color}"></span>
+        <span class="results-name">${escapeHtml(p.name)}${youTag}</span>
+        <span class="results-networth">${fmtMoney(p.netWorth)}</span>
+        <span class="results-pnl ${cls}">${pnl>=0?'+':''}${fmtMoney(pnl)} (${fmtPct(pct)})</span>
+      </li>`;
+    }).join('');
+  }
+
+  function drawSparkline(canvas, history, color){
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0,0,w,h);
+    if(history.length < 2) return;
+    const min = Math.min(...history), max = Math.max(...history);
+    const range = (max - min) || 1;
+    ctx.beginPath();
+    history.forEach((v,i)=>{
+      const x = (i/(history.length-1)) * (w-2) + 1;
+      const y = h - 1 - ((v-min)/range) * (h-2);
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  function renderTape(){
+    if(!state) return;
+    const items = state.stocks.map(st=>{
+      const chg = st.prevPrice ? ((st.price-st.prevPrice)/st.prevPrice*100) : 0;
+      const cls = chg>=0 ? 'up' : 'down';
+      const arrow = chg>=0 ? '▲' : '▼';
+      return `<span class="tape-item"><span class="sym">${st.sym}</span><span>${fmtMoney(st.price)}</span><span class="chg ${cls}">${arrow} ${fmtPct(chg)}</span></span>`;
+    }).join('');
+    $('tape-track').innerHTML = items + items; // duplicate for seamless loop
+  }
+
+  function renderTopbar(){
+    $('tb-room-code').textContent = state.roomCode || roomCode || '-----';
+    const cfg = currentModeCfg();
+    const isDayTrading = state.settings && state.settings.mode === 'daytrading';
+    $('tb-tick').textContent = isDayTrading ? (state.tick + ' / ' + state.settings.sessionLength) : state.tick;
+
+    $('tb-fee-item').classList.toggle('hidden', !cfg.commission);
+    if(cfg.commission){ $('tb-fee').textContent = fmtMoney(cfg.commission); }
+
+    const pill = $('tb-status');
+    const txt = $('tb-status-text');
+    if(state.finished){
+      pill.className = 'status-pill paused';
+      txt.textContent = 'CLOSED';
+    } else if(state.running){
+      pill.className = 'status-pill running';
+      txt.textContent = 'LIVE';
+    } else {
+      pill.className = 'status-pill paused';
+      txt.textContent = 'PAUSED';
+    }
+    $('tb-host-controls').classList.toggle('hidden', !isHost || state.finished);
+    $('btn-pause').textContent = state.running ? 'Pause' : 'Resume';
+  }
+
+  let qtyState = {};
+
+  function renderStockTable(){
+    const me = state.players[myId];
+    const tbody = $('stock-tbody');
+    tbody.innerHTML = state.stocks.map(st=>{
+      const chg = st.prevPrice ? ((st.price-st.prevPrice)/st.prevPrice*100) : 0;
+      const cls = chg>=0 ? 'up' : 'down';
+      const held = me ? (me.holdings[st.sym]||0) : 0;
+      const qtyVal = qtyState[st.sym] || 1;
+      const avgCost = (me && held > 0 && me.costBasis) ? me.costBasis[st.sym] : null;
+      let avgHtml = '';
+      if(avgCost != null){
+        const diffPct = avgCost ? ((st.price - avgCost) / avgCost * 100) : 0;
+        const avgCls = diffPct >= 0 ? 'up' : 'down';
+        avgHtml = `<div class="avg-cost ${avgCls}">avg ${fmtMoney(avgCost)} <span class="avg-cost-pct">(${fmtPct(diffPct)})</span></div>`;
+      }
+      return `
+      <tr class="${st.isIndex ? 'index-row' : ''}">
+        <td class="sym-cell">
+          <div class="sym">${st.sym}</div>
+          <div class="name">${escapeHtml(st.name)}</div>
+          <div class="sector-tag">${st.sector}</div>${st.div ? `<div class="div-tag">Pays dividends</div>` : ''}
+        </td>
+        <td class="price-cell">${fmtMoney(st.price)}${avgHtml}</td>
+        <td class="chg-cell ${cls}">${fmtPct(chg)}</td>
+        <td class="spark-cell"><canvas width="90" height="30" data-sym="${st.sym}"></canvas></td>
+        <td class="trade-cell">
+          <input type="number" min="1" value="${qtyVal}" class="qty-input" data-qtysym="${st.sym}">
+          <button class="btn btn-buy btn-small" data-buy="${st.sym}">Buy</button>
+          <button class="btn btn-sell btn-small" data-sell="${st.sym}" ${held<=0?'disabled':''}>Sell</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('canvas[data-sym]').forEach(c=>{
+      const st = stockBySym(c.getAttribute('data-sym'));
+      const chg = st.prevPrice ? (st.price-st.prevPrice) : 0;
+      drawSparkline(c, st.history, chg>=0 ? '#3ddc84' : '#ff5c5c');
+    });
+
+    tbody.querySelectorAll('.qty-input').forEach(input=>{
+      const sym = input.getAttribute('data-qtysym');
+      input.addEventListener('input', ()=>{
+        const n = parseInt(input.value, 10);
+        qtyState[sym] = (n && n > 0) ? n : 1;
+      });
+    });
+
+    tbody.querySelectorAll('[data-buy]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const sym = btn.getAttribute('data-buy');
+        const qtyInput = tbody.querySelector(`[data-qtysym="${sym}"]`);
+        sendOrder(sym, 'buy', qtyInput.value);
+      });
+    });
+    tbody.querySelectorAll('[data-sell]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const sym = btn.getAttribute('data-sell');
+        const qtyInput = tbody.querySelector(`[data-qtysym="${sym}"]`);
+        sendOrder(sym, 'sell', qtyInput.value);
+      });
+    });
+  }
+
+  function renderSide(){
+    const me = state.players[myId];
+    if(!me) return;
+    let hv = 0;
+    const holdingsEntries = Object.keys(me.holdings).filter(s=>me.holdings[s]>0);
+    $('side-cash').textContent = fmtMoney(me.cash);
+    if(holdingsEntries.length === 0){
+      $('side-holdings').innerHTML = '<li class="holdings-empty">No positions yet</li>';
+    } else {
+      $('side-holdings').innerHTML = holdingsEntries.map(sym=>{
+        const st = stockBySym(sym);
+        const qty = me.holdings[sym];
+        const val = st.price*qty;
+        hv += val;
+        return `<li><span>${sym} × ${qty}</span><b>${fmtMoney(val)}</b></li>`;
+      }).join('');
+    }
+    $('side-holdings-value').textContent = fmtMoney(me.netWorth - me.cash);
+    $('side-networth').textContent = fmtMoney(me.netWorth);
+    $('side-dividends').textContent = fmtMoney(me.dividendsEarned || 0);
+
+    const ranked = Object.values(state.players).slice().sort((a,b)=>b.netWorth-a.netWorth);
+    $('leaderboard').innerHTML = ranked.map((p,i)=>{
+      const youTag = p.id===myId ? ' (you)' : '';
+      return `<li><span class="rank">${i+1}</span><span class="dot" style="background:${p.color}"></span><span class="lname">${escapeHtml(p.name)}${youTag}</span><span class="lval">${fmtMoney(p.netWorth)}</span></li>`;
+    }).join('');
+  }
+
+  function renderLog(){
+    const entries = state.log.slice(-30);
+    $('log-list').innerHTML = entries.map(e=>{
+      const cls = e.kind === 'news' ? 'news' : '';
+      return `<li class="${cls}"><span class="t">T${e.tick}</span>${escapeHtml(e.text)}</li>`;
+    }).join('');
+  }
+
+  function renderAll(){
+    if(!state) return;
+    renderTape();
+    renderTopbar();
+    renderStockTable();
+    renderSide();
+    renderLog();
+  }
+
+  /* ============================================================
+     UI WIRING
+  ============================================================ */
+  $('btn-host').addEventListener('click', ()=>{
+    pendingRole = 'host';
+    showScreen('screen-name');
+  });
+
+  $('btn-join').addEventListener('click', ()=>{
+    const code = $('input-join-code').value.trim().toUpperCase();
+    $('landing-err').textContent = '';
+    if(code.length < 3){
+      $('landing-err').textContent = 'Enter a valid room code.';
+      return;
+    }
+    joinTargetCode = code;
+    pendingRole = 'join';
+    showScreen('screen-name');
+  });
+  $('input-join-code').addEventListener('keydown', e=>{ if(e.key==='Enter') $('btn-join').click(); });
+
+  $('btn-confirm-name').addEventListener('click', ()=>{
+    const name = $('input-name').value.trim();
+    if(!name){
+      $('name-err').textContent = 'Please enter a name.';
+      return;
+    }
+    myName = name.slice(0,16);
+    if(pendingRole === 'host'){
+      setupHost();
+    } else {
+      setupJoin(joinTargetCode);
+    }
+  });
+  $('input-name').addEventListener('keydown', e=>{ if(e.key==='Enter') $('btn-confirm-name').click(); });
+
+  function applySettingsChange(){
+    if(!isHost || !state || state.started) return;
+    state.stocks = buildStocks(state.settings, state.stockOrder);
+    broadcastState();
+    renderLobby();
+  }
+
+  function syncSettings(){
+    if(!isHost || !state || state.started) return;
+    broadcastState();
+    renderLobby();
+  }
+
+  function setMode(mode){
+    if(!isHost || !state || state.started) return;
+    state.settings.mode = mode;
+    updateModeButtons();
+    syncSettings();
+  }
+
+  $('mode-btn-classic').addEventListener('click', ()=> setMode('classic'));
+  $('mode-btn-daytrading').addEventListener('click', ()=> setMode('daytrading'));
+
+  $('setting-sessionlen').addEventListener('input', e=>{
+    if(!isHost || !state) return;
+    state.settings.sessionLength = parseInt(e.target.value, 10);
+    updateSessionLenLabel();
+    syncSettings();
+  });
+
+  $('setting-stockcount').addEventListener('input', e=>{
+    if(!isHost || !state) return;
+    state.settings.stockCount = parseInt(e.target.value, 10);
+    $('setting-stockcount-label').textContent = state.settings.stockCount;
+    applySettingsChange();
+  });
+
+  $('setting-vol').addEventListener('input', e=>{
+    if(!isHost || !state) return;
+    state.settings.volMult = parseFloat(e.target.value);
+    $('setting-vol-label').textContent = state.settings.volMult.toFixed(1) + 'x';
+    applySettingsChange();
+  });
+
+  $('setting-trend').addEventListener('input', e=>{
+    if(!isHost || !state) return;
+    state.settings.trend = parseFloat(e.target.value);
+    $('setting-trend-label').textContent = trendLabel(state.settings.trend);
+    syncSettings();
+  });
+
+  $('btn-start-game').addEventListener('click', ()=>{
+    if(!isHost || !state) return;
+    state.started = true;
+    qtyState = {};
+    const cfg = currentModeCfg();
+    const modeNote = cfg.commission
+      ? ` (${cfg.label} mode — ${fmtMoney(cfg.commission)} fee/trade, closes after ${state.settings.sessionLength} ticks)`
+      : ` (${cfg.label} mode)`;
+    pushLog('Market opened — trading has begun' + modeNote, 'system');
+    showScreen('screen-game');
+    startTicking();
+    broadcastState();
+    renderAll();
+  });
+
+  $('btn-pause').addEventListener('click', ()=>{
+    if(!isHost || !state || state.finished) return;
+    if(state.running){ stopTicking(); } else { startTicking(); }
+    broadcastState();
+    renderTopbar();
+  });
+
+  $('btn-results-exit').addEventListener('click', ()=>{
+    destroyPeer();
+    state = null;
+    qtyState = {};
+    $('input-join-code').value = '';
+    $('landing-err').textContent = '';
+    showScreen('screen-landing');
+  });
+
+  window.addEventListener('beforeunload', ()=>{
+    if(isHost && connections){
+      Object.values(connections).forEach(c=>{ try{ c.close(); }catch(e){} });
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
